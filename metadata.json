@@ -1,0 +1,6 @@
+{
+  "name": "Sunday AI",
+  "description": "Tu suite de IA para domingos relajados, productivos e inspiradores. Cambia entre múltiples modelos para planificar tu semana, reflexionar o generar arte.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
