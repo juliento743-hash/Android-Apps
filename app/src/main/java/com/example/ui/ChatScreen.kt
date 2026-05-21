@@ -1,21 +1,24 @@
 package com.example.ui
 
+import android.app.Activity
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.speech.RecognizerIntent
 import android.util.Base64
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -27,6 +30,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -35,7 +39,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -58,6 +61,10 @@ val CozyCreamCard = Color(0xFFFAF2EB)
 val CozyTextDark = Color(0xFF3F3735)
 val CozyTextLight = Color(0xFFF3EFE9)
 val CozyBrownMedium = Color(0xFF8B6B5E)
+
+// Pro Gold / Premium Aesthetic Styling Palette
+val ProGoldBorder = Color(0xFFFFD700)
+val ProGoldBg = Color(0x1BFFD700)
 
 // Frosted Glass Aesthetic Styling Palette
 val GlassPurplePrimary = Color(0xFF6750A4)
@@ -97,655 +104,390 @@ fun ChatScreen(
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
 
+    // Observe State from ViewModel
     val sessions by viewModel.sessions.collectAsState()
     val activeSessionId by viewModel.activeSessionId.collectAsState()
     val activeMessages by viewModel.activeMessages.collectAsState()
     val currentModelType by viewModel.currentModelType.collectAsState()
     val isSending by viewModel.isSending.collectAsState()
 
+    // Accounts / Settings States
+    val userName by viewModel.userName.collectAsState()
+    val userEmoji by viewModel.userEmoji.collectAsState()
+    val isProMember by viewModel.isProMember.collectAsState()
+    val userApiKey by viewModel.userApiKey.collectAsState()
+
+    // Live Mode variables
+    val isLiveActive by viewModel.isLiveActive.collectAsState()
+    val liveSpeakingStatus by viewModel.liveSpeakingStatus.collectAsState()
+    val lastLiveText by viewModel.lastLiveText.collectAsState()
+    val liveVoiceSoundActive by viewModel.liveVoiceSoundActive.collectAsState()
+    val selectedVoiceGender by viewModel.selectedVoiceGender.collectAsState()
+
+    // Triggers / Local screen triggers
     var showRenameDialog by remember { mutableStateOf<ChatSession?>(null) }
     var renameTitleText by remember { mutableStateOf("") }
     var showModelInfoDialog by remember { mutableStateOf(false) }
+    var showAccountDialog by remember { mutableStateOf(false) }
 
-    // Navigation Drawer with History
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(
-                drawerContainerColor = Color(0xEEF5F6FA),
+    // Register Google Speech recognition activity launcher
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spokenText = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spokenText.isNullOrEmpty()) {
+                viewModel.sendLiveVoiceInput(spokenText)
+            }
+        }
+    }
+
+    fun launchSpeechToText() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Cuéntale hoy algo a Sunday AI...")
+        }
+        try {
+            speechLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "El dictado no está disponible, introduce el texto en la barra inferior.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val isWideScreen = maxWidth >= 720.dp
+
+        if (isWideScreen) {
+            // TABLET / DESKTOP SPLIT CANONICAL LAYOUT
+            Row(
                 modifier = Modifier
-                    .width(310.dp)
-                    .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
+                    .fillMaxSize()
+                    .background(FrostedBackgroundBrush)
             ) {
-                Spacer(modifier = Modifier.height(24.dp))
-                // Drawer Header
-                Row(
+                // Fixed glass sidebar context on the left
+                SidebarContent(
+                    sessions = sessions,
+                    activeSessionId = activeSessionId,
+                    currentModelType = currentModelType,
+                    onSessionSelected = { id -> viewModel.selectSession(id) },
+                    onStartNewSession = { model -> viewModel.startNewSession(model) },
+                    onRenameClick = { session ->
+                        renameTitleText = session.title
+                        showRenameDialog = session
+                    },
+                    onDeleteClick = { id -> viewModel.deleteSession(id) },
+                    userName = userName,
+                    userEmoji = userEmoji,
+                    isProMember = isProMember,
+                    onProfileClick = { showAccountDialog = true },
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(GlassPurplePrimary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CalendarToday,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
+                        .width(300.dp)
+                        .fillMaxHeight()
+                        .border(
+                            width = 1.dp,
+                            color = Color(0x33FFFFFF),
+                            shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
                         )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Sunday AI",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Historial de charlas",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // New Session Actions Header
-                Text(
-                    text = "Nueva charla con:",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                 )
 
-                // Quick Launch Model Buttons
-                Row(
+                // Main Chat Panel (Right Panel)
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .weight(1f)
+                        .fillMaxHeight()
                 ) {
-                    SundayModelType.values().forEach { model ->
-                        Button(
-                            onClick = {
+                    Scaffold(
+                        containerColor = Color.Transparent,
+                        topBar = {
+                            CenterAlignedTopAppBar(
+                                title = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(30.dp))
+                                            .background(Color(0x33FFFFFF))
+                                            .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(30.dp))
+                                            .clickable { showModelInfoDialog = true }
+                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = currentModelType.displayName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp,
+                                            color = GlassTextDark
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = "Model Info",
+                                            tint = GlassPurplePrimary.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                },
+                                navigationIcon = {
+                                    // Left User Account Profile Status
+                                    Row(
+                                        modifier = Modifier
+                                            .padding(start = 16.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0x2AFFFFFF))
+                                            .clickable { showAccountDialog = true }
+                                            .border(
+                                                width = if (isProMember) 1.5.dp else 1.dp,
+                                                color = if (isProMember) ProGoldBorder else Color(0x33FFFFFF),
+                                                shape = RoundedCornerShape(20.dp)
+                                            )
+                                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(text = userEmoji, fontSize = 16.sp)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = userName.take(12),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = GlassTextDark
+                                        )
+                                        if (isProMember) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(
+                                                imageVector = Icons.Default.Stars,
+                                                contentDescription = "Pro",
+                                                tint = Color(0xFFD4AF37),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                actions = {
+                                    // Gemini Live quick launcher trigger
+                                    IconButton(
+                                        onClick = { viewModel.startLiveSession(currentModelType) },
+                                        modifier = Modifier
+                                            .padding(end = 4.dp)
+                                            .size(40.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(CozyTerracotta.copy(alpha = 0.12f))
+                                            .border(width = 1.dp, color = CozyTerracotta.copy(alpha = 0.3f), shape = RoundedCornerShape(20.dp))
+                                    ) {
+                                        Icon(imageVector = Icons.Default.RecordVoiceOver, contentDescription = "Modo Live", tint = CozyTerracotta)
+                                    }
+
+                                    IconButton(
+                                        onClick = { viewModel.startNewSession(currentModelType) },
+                                        modifier = Modifier
+                                            .padding(end = 12.dp)
+                                            .size(40.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0x33FFFFFF))
+                                            .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(20.dp))
+                                    ) {
+                                        Icon(imageVector = Icons.Default.AddComment, contentDescription = "Nueva sala", tint = GlassTextMedium)
+                                    }
+                                },
+                                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                                    containerColor = Color.Transparent
+                                )
+                            )
+                        }
+                    ) { innerPadding ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                        ) {
+                            if (activeSessionId == null) {
+                                LandingHubDashboard(
+                                    currentModelType = currentModelType,
+                                    onStartSession = { model -> viewModel.startNewSession(model) },
+                                    onStartLive = { model -> viewModel.startLiveSession(model) }
+                                )
+                            } else {
+                                ChatContentLayout(
+                                    viewModel = viewModel,
+                                    messages = activeMessages,
+                                    isSending = isSending,
+                                    currentModel = currentModelType
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // MOBILE AND PORTRAIT SLIDING DRAWER VIEW
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    ModalDrawerSheet(
+                        drawerContainerColor = Color(0xEEF5F6FA),
+                        modifier = Modifier
+                            .width(310.dp)
+                            .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
+                    ) {
+                        SidebarContent(
+                            sessions = sessions,
+                            activeSessionId = activeSessionId,
+                            currentModelType = currentModelType,
+                            onSessionSelected = { id ->
+                                viewModel.selectSession(id)
+                                coroutineScope.launch { drawerState.close() }
+                            },
+                            onStartNewSession = { model ->
                                 viewModel.startNewSession(model)
                                 coroutineScope.launch { drawerState.close() }
                             },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = when (model) {
-                                    SundayModelType.COZY -> Color(0xFFE9C46A)
-                                    SundayModelType.DEEP -> Color(0xFF2A9D8F)
-                                    SundayModelType.ARTIST -> Color(0xFFF4A261)
-                                },
-                                contentColor = Color.White
-                            ),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val modelIcon = when (model) {
-                                    SundayModelType.COZY -> Icons.Default.Coffee
-                                    SundayModelType.DEEP -> Icons.Default.Psychology
-                                    SundayModelType.ARTIST -> Icons.Default.Palette
-                                }
-                                Icon(
-                                    imageVector = modelIcon,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = model.displayName.substringBefore(" ").take(6),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                            onRenameClick = { session ->
+                                renameTitleText = session.title
+                                showRenameDialog = session
+                            },
+                            onDeleteClick = { id -> viewModel.deleteSession(id) },
+                            userName = userName,
+                            userEmoji = userEmoji,
+                            isProMember = isProMember,
+                            onProfileClick = {
+                                showAccountDialog = true
+                                coroutineScope.launch { drawerState.close() }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Saved Sessions list
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Main Mobile View
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(FrostedBackgroundBrush)
                 ) {
-                    if (sessions.isEmpty()) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 32.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "No hay salas previas.\n¡Inicia una nueva arriba!",
-                                    textAlign = TextAlign.Center,
-                                    fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Scaffold(
+                        containerColor = Color.Transparent,
+                        topBar = {
+                            CenterAlignedTopAppBar(
+                                title = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(30.dp))
+                                            .background(Color(0x33FFFFFF))
+                                            .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(30.dp))
+                                            .clickable { showModelInfoDialog = true }
+                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = currentModelType.displayName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = GlassTextDark
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = GlassPurplePrimary.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                },
+                                navigationIcon = {
+                                    IconButton(
+                                        onClick = { coroutineScope.launch { drawerState.open() } },
+                                        modifier = Modifier
+                                            .padding(start = 8.dp)
+                                            .size(40.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0x33FFFFFF))
+                                            .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(20.dp))
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu", tint = GlassTextMedium)
+                                    }
+                                },
+                                actions = {
+                                    // Live and account action triggers
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = { viewModel.startLiveSession(currentModelType) },
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(CozyTerracotta.copy(alpha = 0.12f))
+                                                .border(width = 1.dp, color = CozyTerracotta.copy(alpha = 0.3f), shape = RoundedCornerShape(20.dp))
+                                        ) {
+                                            Icon(imageVector = Icons.Default.RecordVoiceOver, contentDescription = "Live voice", tint = CozyTerracotta, modifier = Modifier.size(18.dp))
+                                        }
+                                        
+                                        Spacer(modifier = Modifier.width(6.dp))
+
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(end = 12.dp)
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color(0x22FFFFFF))
+                                                .clickable { showAccountDialog = true }
+                                                .border(
+                                                    width = if (isProMember) 1.5.dp else 1.dp,
+                                                    color = if (isProMember) ProGoldBorder else Color(0x22FFFFFF),
+                                                    shape = RoundedCornerShape(20.dp)
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(text = userEmoji, fontSize = 18.sp)
+                                        }
+                                    }
+                                },
+                                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                                    containerColor = Color.Transparent
                                 )
-                            }
+                            )
                         }
-                    } else {
-                        items(sessions, key = { it.id }) { session ->
-                            val isSelected = session.id == activeSessionId
-                            val sessionModel = SundayModelType.fromId(session.modelId)
-                            val modelColor = when (sessionModel) {
-                                SundayModelType.COZY -> Color(0xFFE9C46A)
-                                SundayModelType.DEEP -> Color(0xFF2A9D8F)
-                                SundayModelType.ARTIST -> Color(0xFFF4A261)
-                            }
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(
-                                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(
-                                            alpha = 0.8f
-                                        ) else Color.Transparent
-                                    )
-                                    .clickable {
-                                        viewModel.selectSession(session.id)
-                                        coroutineScope.launch { drawerState.close() }
-                                    }
-                                    .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Bubble indicating active model in conversation
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(modelColor.copy(alpha = 0.2f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    val icon = when (sessionModel) {
-                                        SundayModelType.COZY -> Icons.Default.Coffee
-                                        SundayModelType.DEEP -> Icons.Default.Psychology
-                                        SundayModelType.ARTIST -> Icons.Default.Palette
-                                    }
-                                    Icon(
-                                        imageVector = icon,
-                                        contentDescription = null,
-                                        tint = modelColor,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(10.dp))
-
-                                // Session Details
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = session.title,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = sessionModel.displayName,
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                // Interactive action buttons
-                                IconButton(
-                                    onClick = {
-                                        renameTitleText = session.title
-                                        showRenameDialog = session
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Edit,
-                                        contentDescription = "Rename Session",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = { viewModel.deleteSession(session.id) },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Delete,
-                                        contentDescription = "Delete Session",
-                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
+                    ) { innerPadding ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                        ) {
+                            if (activeSessionId == null) {
+                                LandingHubDashboard(
+                                    currentModelType = currentModelType,
+                                    onStartSession = { model -> viewModel.startNewSession(model) },
+                                    onStartLive = { model -> viewModel.startLiveSession(model) }
+                                )
+                            } else {
+                                ChatContentLayout(
+                                    viewModel = viewModel,
+                                    messages = activeMessages,
+                                    isSending = isSending,
+                                    currentModel = currentModelType
+                                )
                             }
                         }
                     }
                 }
             }
         }
-    ) {
-        // Main Screen Interface with Frosted Background Gradient
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(FrostedBackgroundBrush)
+
+        // IMMERSIVE GEMINI LIVE MOOD OVERLAY SCREEN
+        AnimatedVisibility(
+            visible = isLiveActive,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
         ) {
-            Scaffold(
-                containerColor = Color.Transparent, // fully transparent so our gorgeous gradient is always present
-                topBar = {
-                    CenterAlignedTopAppBar(
-                        title = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(30.dp))
-                                    .background(Color(0x33FFFFFF))
-                                    .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(30.dp))
-                                    .clickable { showModelInfoDialog = true }
-                                    .padding(horizontal = 14.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = currentModelType.displayName,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = GlassTextDark
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = "Model Info",
-                                    tint = GlassPurplePrimary.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(15.dp)
-                                )
-                            }
-                        },
-                        navigationIcon = {
-                            IconButton(
-                                onClick = { coroutineScope.launch { drawerState.open() } },
-                                modifier = Modifier
-                                    .padding(start = 8.dp)
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(Color(0x33FFFFFF))
-                                    .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(20.dp))
-                            ) {
-                                Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu", tint = GlassTextMedium)
-                            }
-                        },
-                        actions = {
-                            IconButton(
-                                onClick = { viewModel.startNewSession(currentModelType) },
-                                modifier = Modifier
-                                    .padding(end = 8.dp)
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(Color(0x33FFFFFF))
-                                    .border(width = 1.dp, color = Color(0x33FFFFFF), shape = RoundedCornerShape(20.dp))
-                            ) {
-                                Icon(imageVector = Icons.Default.AddComment, contentDescription = "Nueva sala", tint = GlassTextMedium)
-                            }
-                        },
-                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                            containerColor = Color.Transparent
-                        )
-                    )
-                }
-            ) { innerPadding ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                ) {
-                    if (activeSessionId == null) {
-                        // Beautiful Frosted Glass Landing Hub Dashboard
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 24.dp, vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // App Logo Header (exactly modeled after mockup brand showcase!)
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(GlassPurplePrimary),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "S",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 20.sp
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = "Sunday AI",
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GlassTextDark
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(20.dp))
-
-                            // Active Model Card (Glassmorphic featured)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .frostedGlassCard(
-                                        shape = RoundedCornerShape(32.dp),
-                                        bgColor = Color(0x80FFFFFF),
-                                        borderColor = Color(0x99FFFFFF),
-                                        shadowElevation = 2f
-                                    )
-                                    .padding(24.dp)
-                            ) {
-                                Column {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text(
-                                                text = "ACTIVE MODEL",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = GlassPurplePrimary,
-                                                letterSpacing = 1.5.sp
-                                            )
-                                            Text(
-                                                text = currentModelType.displayName,
-                                                fontSize = 22.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = GlassTextDark
-                                            )
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(16.dp))
-                                                .background(GlassPurpleContainer)
-                                                .padding(horizontal = 12.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = "Pro",
-                                                color = GlassPurpleText,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    Text(
-                                        text = currentModelType.description,
-                                        fontSize = 14.sp,
-                                        color = GlassTextMedium,
-                                        lineHeight = 18.sp
-                                    )
-
-                                    Spacer(modifier = Modifier.height(16.dp))
-
-                                    // Dynamic indicators from HTML mock
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .height(6.dp)
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(GlassPurplePrimary)
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .height(6.dp)
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(GlassPurplePrimary.copy(alpha = 0.2f))
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .height(6.dp)
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(GlassPurplePrimary.copy(alpha = 0.2f))
-                                        )
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            // Model Selection Title
-                            Text(
-                                text = "Elige tu Mood de Domingo",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = GlassTextDark,
-                                modifier = Modifier
-                                    .align(Alignment.Start)
-                                    .padding(bottom = 12.dp)
-                            )
-
-                            // 2x2 Model Selection Grid elements
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                // Sunday Cozy Card (Canvas type)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .frostedGlassCard(
-                                            shape = RoundedCornerShape(24.dp),
-                                            bgColor = Color(0x66FFFFFF),
-                                            borderColor = Color(0x4DFFFFFF),
-                                            shadowElevation = 1f // use simple float
-                                        )
-                                        .clickable { viewModel.startNewSession(SundayModelType.COZY) }
-                                        .padding(16.dp)
-                                ) {
-                                    Column {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(Color(0xFFFFEEBA))
-                                                .align(Alignment.Start),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Coffee,
-                                                contentDescription = null,
-                                                tint = Color(0xFF8A6D3B),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text(
-                                            text = "Sunday Cozy",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = GlassTextDark
-                                        )
-                                        Text(
-                                            text = "Charla chill de café",
-                                            fontSize = 11.sp,
-                                            color = GlassTextMedium
-                                        )
-                                    }
-                                }
-
-                                // Sunday Deep Card (Script type)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .frostedGlassCard(
-                                            shape = RoundedCornerShape(24.dp),
-                                            bgColor = Color(0x66FFFFFF),
-                                            borderColor = Color(0x4DFFFFFF),
-                                            shadowElevation = 1f
-                                        )
-                                        .clickable { viewModel.startNewSession(SundayModelType.DEEP) }
-                                        .padding(16.dp)
-                                ) {
-                                    Column {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(Color(0xFFB2EEB5))
-                                                .align(Alignment.Start),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Psychology,
-                                                contentDescription = null,
-                                                tint = Color(0xFF00390A),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text(
-                                            text = "Sunday Deep",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = GlassTextDark
-                                        )
-                                        Text(
-                                            text = "Pensamiento y código",
-                                            fontSize = 11.sp,
-                                            color = GlassTextMedium
-                                        )
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                              ) {
-                                // Sunday Artist Card (Echo type)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .frostedGlassCard(
-                                            shape = RoundedCornerShape(24.dp),
-                                            bgColor = Color(0x66FFFFFF),
-                                            borderColor = Color(0x4DFFFFFF),
-                                            shadowElevation = 1f
-                                        )
-                                        .clickable { viewModel.startNewSession(SundayModelType.ARTIST) }
-                                        .padding(16.dp)
-                                ) {
-                                    Column {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(Color(0xFFFFD8E4))
-                                                .align(Alignment.Start),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Palette,
-                                                contentDescription = null,
-                                                tint = Color(0xFF31111D),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text(
-                                            text = "Sunday Artist",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = GlassTextDark
-                                        )
-                                        Text(
-                                            text = "Dibuja un finde creativo",
-                                            fontSize = 11.sp,
-                                            color = GlassTextMedium
-                                        )
-                                    }
-                                }
-
-                                // Placeholder Info Card (Flash/Static details)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .frostedGlassCard(
-                                            shape = RoundedCornerShape(24.dp),
-                                            bgColor = Color(0x33FFFFFF),
-                                            borderColor = Color(0x13FFFFFF),
-                                            shadowElevation = 0f
-                                        )
-                                        .padding(16.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Icon(
-                                            imageVector = Icons.Default.Star,
-                                            contentDescription = null,
-                                            tint = GlassPurplePrimary.copy(alpha = 0.4f),
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "Más pronto...",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = GlassTextMedium.copy(alpha = 0.4f)
-                                        )
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(24.dp))
-                        }
-                    } else {
-                        // Regular Conversation Window with Glass background showing through
-                        ChatContentLayout(
-                            viewModel = viewModel,
-                            messages = activeMessages,
-                            isSending = isSending,
-                            currentModel = currentModelType
-                        )
-                    }
-                }
-            }
+            GeminiLiveOverlay(
+                isSending = isSending,
+                speakingStatus = liveSpeakingStatus,
+                lastSpokenText = lastLiveText,
+                liveVoiceSoundActive = liveVoiceSoundActive,
+                onSoundToggle = { viewModel.updateVoiceConfig(it, selectedVoiceGender) },
+                onSendSpeech = { text -> viewModel.sendLiveVoiceInput(text) },
+                onMicTrigger = { launchSpeechToText() },
+                onCloseLive = { viewModel.setLiveActive(false) },
+                currentModel = currentModelType
+            )
         }
     }
 
@@ -784,6 +526,20 @@ fun ChatScreen(
                     Text("Cancelar")
                 }
             }
+        )
+    }
+
+    // Modern Accounts/Settings Dialog Panel
+    if (showAccountDialog) {
+        AccountSettingsDialog(
+            userName = userName,
+            userEmoji = userEmoji,
+            isProMember = isProMember,
+            userApiKey = userApiKey,
+            onSaveProfile = { name, emoji -> viewModel.updateProfile(name, emoji) },
+            onTogglePro = { viewModel.updateProStatus(it) },
+            onSaveApiKey = { viewModel.updateApiKey(it) },
+            onDismiss = { showAccountDialog = false }
         )
     }
 
@@ -895,7 +651,6 @@ fun ChatContentLayout(
     val scrollState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     var inputMessageText by remember { mutableStateOf("") }
-    val coroutineScope = rememberCoroutineScope()
 
     // Smooth autoscroll down when message list increments
     LaunchedEffect(messages.size, isSending) {
@@ -1041,9 +796,9 @@ fun ChatContentLayout(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Mandatory Key security text warnings for proto
+                // Security text warnings for proto
                 Text(
-                    text = "Security Warning: Las respuestas son generadas usando tu clave local. Evita compartir capturas confidenciales o publicar la APK si tus claves personales están expuestas.",
+                    text = "Sunday AI: Respuestas cifradas en tu almacenamiento local.",
                     fontSize = 9.sp,
                     lineHeight = 11.sp,
                     textAlign = TextAlign.Center,
@@ -1118,7 +873,6 @@ fun MessageBubble(message: ChatMessage) {
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             Column {
-                // If it's a Sunday Artist response and has encoded image, we decode and present it
                 if (message.imageB64 != null) {
                     val decodedImage = rememberBase64Image(message.imageB64)
                     if (decodedImage != null) {
@@ -1135,7 +889,6 @@ fun MessageBubble(message: ChatMessage) {
                     }
                 }
 
-                // Text body content
                 Text(
                     text = message.text,
                     fontSize = 14.sp,
@@ -1161,7 +914,7 @@ fun PresetsList(
         )
         SundayModelType.DEEP -> listOf(
             "📅 Planificador para mi semana",
-            "💡 Consejos para evitar el estrés del lunes",
+            "💡 Consejos para evitar el estrés de lunes",
             "🧩 Resume mis metas organizadas",
             "💻 ¿Cómo optimizo esta rutina?"
         )
@@ -1210,9 +963,9 @@ fun AnimatedTypingCard(modelName: String) {
     val dotCountFloat by transition.animateFloat(
         initialValue = 1f,
         targetValue = 4f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
         label = "dotsAnimation"
     )
@@ -1234,7 +987,6 @@ fun AnimatedTypingCard(modelName: String) {
     }
 }
 
-// Utility Base64 Image decoder
 @Composable
 fun rememberBase64Image(base64Str: String?): ImageBitmap? {
     return remember(base64Str) {
@@ -1249,8 +1001,1113 @@ fun rememberBase64Image(base64Str: String?): ImageBitmap? {
     }
 }
 
-// Simple time formatter utility
 fun formatTime(timestamp: Long): String {
     val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
     return formatter.format(Date(timestamp))
+}
+
+@Composable
+fun SidebarContent(
+    sessions: List<ChatSession>,
+    activeSessionId: String?,
+    currentModelType: SundayModelType,
+    onSessionSelected: (String) -> Unit,
+    onStartNewSession: (SundayModelType) -> Unit,
+    onRenameClick: (ChatSession) -> Unit,
+    onDeleteClick: (String) -> Unit,
+    userName: String,
+    userEmoji: String,
+    isProMember: Boolean,
+    onProfileClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .background(Color(0xEEF5F6FA))
+    ) {
+        Spacer(modifier = Modifier.height(24.dp))
+        // Drawer Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(GlassPurplePrimary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CalendarToday,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "Sunday AI",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = GlassTextDark
+                )
+                Text(
+                    text = "Historial de charlas",
+                    fontSize = 12.sp,
+                    color = GlassTextMedium
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color(0x1A000000))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // New Session Actions Header
+        Text(
+            text = "Nueva charla con:",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = GlassTextMedium,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+        )
+
+        // Quick Launch Model Buttons
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SundayModelType.values().forEach { model ->
+                Button(
+                    onClick = { onStartNewSession(model) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = when (model) {
+                            SundayModelType.COZY -> Color(0xFFE9C46A)
+                            SundayModelType.DEEP -> Color(0xFF2A9D8F)
+                            SundayModelType.ARTIST -> Color(0xFFF4A261)
+                        },
+                        contentColor = Color.White
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val modelIcon = when (model) {
+                            SundayModelType.COZY -> Icons.Default.Coffee
+                            SundayModelType.DEEP -> Icons.Default.Psychology
+                            SundayModelType.ARTIST -> Icons.Default.Palette
+                        }
+                        Icon(
+                            imageVector = modelIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = model.displayName.substringBefore(" ").take(6),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color(0x1A000000))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Saved Sessions list
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (sessions.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No hay salas de chat.\n¡Crea una eligiendo tu mood!",
+                            textAlign = TextAlign.Center,
+                            fontSize = 13.sp,
+                            color = GlassTextMedium
+                        )
+                    }
+                }
+            } else {
+                items(sessions, key = { it.id }) { session ->
+                    val isSelected = session.id == activeSessionId
+                    val sessionModel = SundayModelType.fromId(session.modelId)
+                    val modelColor = when (sessionModel) {
+                        SundayModelType.COZY -> Color(0xFFE9C46A)
+                        SundayModelType.DEEP -> Color(0xFF2A9D8F)
+                        SundayModelType.ARTIST -> Color(0xFFF4A261)
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isSelected) GlassPurpleContainer.copy(alpha = 0.8f) else Color.Transparent
+                            )
+                            .clickable { onSessionSelected(session.id) }
+                            .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(modelColor.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val icon = when (sessionModel) {
+                                SundayModelType.COZY -> Icons.Default.Coffee
+                                SundayModelType.DEEP -> Icons.Default.Psychology
+                                SundayModelType.ARTIST -> Icons.Default.Palette
+                            }
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                tint = modelColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = session.title,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (isSelected) GlassPurpleText else GlassTextDark
+                            )
+                            Text(
+                                text = sessionModel.displayName,
+                                fontSize = 11.sp,
+                                color = GlassTextMedium
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { onRenameClick(session) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Edit,
+                                contentDescription = "Renombrar",
+                                tint = GlassTextMedium.copy(alpha = 0.6f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { onDeleteClick(session.id) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Delete,
+                                contentDescription = "Eliminar",
+                                tint = Color(0xFFBA1A1A).copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // FOOTER ACCOUNT BUTTON
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color(0x1F000000))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onProfileClick() }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(21.dp))
+                    .background(
+                        if (isProMember) ProGoldBg else GlassPurplePrimary.copy(alpha = 0.15f)
+                    )
+                    .border(
+                        width = 1.5.dp,
+                        color = if (isProMember) ProGoldBorder else Color.Transparent,
+                        shape = RoundedCornerShape(21.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = userEmoji, fontSize = 20.sp)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = userName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = GlassTextDark,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (isProMember) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.Stars,
+                            contentDescription = "PRO Member",
+                            tint = Color(0xFFD4AF37),
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                }
+                Text(
+                    text = if (isProMember) "Sunday Pro Member" else "Cuenta de Domingo",
+                    fontSize = 11.sp,
+                    color = if (isProMember) Color(0xFFB8860B) else GlassTextMedium
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = "Configuración",
+                tint = GlassTextMedium,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun LandingHubDashboard(
+    currentModelType: SundayModelType,
+    onStartSession: (SundayModelType) -> Unit,
+    onStartLive: (SundayModelType) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Branding Title Logo
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(GlassPurplePrimary),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "S",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Sunday AI",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = GlassTextDark
+            )
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Active Theme Card
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 600.dp)
+                .frostedGlassCard(
+                    shape = RoundedCornerShape(32.dp),
+                    bgColor = Color(0x80FFFFFF),
+                    borderColor = Color(0x99FFFFFF),
+                    shadowElevation = 2f
+                )
+                .padding(24.dp)
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "ESTADO DEL ENTORNO",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GlassPurplePrimary,
+                            letterSpacing = 1.5.sp
+                        )
+                        Text(
+                            text = currentModelType.displayName,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = GlassTextDark
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(GlassPurpleContainer)
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Sunday AI Pro",
+                            color = GlassPurpleText,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = currentModelType.description,
+                    fontSize = 14.sp,
+                    color = GlassTextMedium,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Action to speak in real-time mode directly
+                Button(
+                    onClick = { onStartLive(currentModelType) },
+                    colors = ButtonDefaults.buttonColors(containerColor = CozyTerracotta),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.RecordVoiceOver, contentDescription = null, tint = Color.White)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Iniciar Conversación Live",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Model Selection Title
+        Text(
+            text = "Elige tu Mood para Conversar",
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            color = GlassTextDark,
+            modifier = Modifier
+                .widthIn(max = 600.dp)
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+        )
+
+        // Mood Selection Grid elements
+        Column(
+            modifier = Modifier.widthIn(max = 600.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Sunday Cozy Card
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .frostedGlassCard(
+                            shape = RoundedCornerShape(24.dp),
+                            bgColor = Color(0x66FFFFFF),
+                            borderColor = Color(0x4DFFFFFF),
+                            shadowElevation = 1f
+                        )
+                        .clickable { onStartSession(SundayModelType.COZY) }
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFFFEEBA))
+                                .align(Alignment.Start),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Coffee,
+                                contentDescription = null,
+                                tint = Color(0xFF8A6D3B),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Sunday Cozy",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = GlassTextDark
+                        )
+                        Text(
+                            text = "Charla chill de café",
+                            fontSize = 11.sp,
+                            color = GlassTextMedium
+                        )
+                    }
+                }
+
+                // Sunday Deep Card
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .frostedGlassCard(
+                            shape = RoundedCornerShape(24.dp),
+                            bgColor = Color(0x66FFFFFF),
+                            borderColor = Color(0x4DFFFFFF),
+                            shadowElevation = 1f
+                        )
+                        .clickable { onStartSession(SundayModelType.DEEP) }
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFB2EEB5))
+                                .align(Alignment.Start),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Psychology,
+                                contentDescription = null,
+                                tint = Color(0xFF00390A),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Sunday Deep",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = GlassTextDark
+                        )
+                        Text(
+                            text = "Pensamiento y código",
+                            fontSize = 11.sp,
+                            color = GlassTextMedium
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Sunday Artist Card
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .frostedGlassCard(
+                            shape = RoundedCornerShape(24.dp),
+                            bgColor = Color(0x66FFFFFF),
+                            borderColor = Color(0x4DFFFFFF),
+                            shadowElevation = 1f
+                        )
+                        .clickable { onStartSession(SundayModelType.ARTIST) }
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFFFD8E4))
+                                .align(Alignment.Start),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = null,
+                                tint = Color(0xFF31111D),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Sunday Artist",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = GlassTextDark
+                        )
+                        Text(
+                            text = "Dibuja un finde creativo",
+                            fontSize = 11.sp,
+                            color = GlassTextMedium
+                        )
+                    }
+                }
+
+                // Immersive info Card
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .frostedGlassCard(
+                            shape = RoundedCornerShape(24.dp),
+                            bgColor = Color(0x33FFFFFF),
+                            borderColor = Color(0x13FFFFFF),
+                            shadowElevation = 0f
+                        )
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = GlassPurplePrimary.copy(alpha = 0.4f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Cuenta Conectada",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GlassTextMedium
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+    }
+}
+
+// IMMERSIVE GEMINI LIVE SIMULATION SCREENS OVERLAY
+@Composable
+fun GeminiLiveOverlay(
+    isSending: Boolean,
+    speakingStatus: String,
+    lastSpokenText: String,
+    liveVoiceSoundActive: Boolean,
+    onSoundToggle: (Boolean) -> Unit,
+    onSendSpeech: (String) -> Unit,
+    onMicTrigger: () -> Unit,
+    onCloseLive: () -> Unit,
+    currentModel: SundayModelType
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "live_waves")
+
+    val scale1 by infiniteTransition.animateFloat(
+        initialValue = 0.9f,
+        targetValue = 1.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale1"
+    )
+    val scale2 by infiniteTransition.animateFloat(
+        initialValue = 0.82f,
+        targetValue = 1.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale2"
+    )
+    val scale3 by infiniteTransition.animateFloat(
+        initialValue = 0.76f,
+        targetValue = 1.45f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1900, easing = LinearOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale3"
+    )
+
+    var liveTextInput by remember { mutableStateOf("") }
+
+    val themeColor = when (speakingStatus) {
+        "Escuchando" -> Color(0xFF34A853) // Green listening
+        "Pensando" -> Color(0xFFFBBC05)  // Yellow thinking
+        "Hablando" -> Color(0xFF4285F4)  // Blue talking
+        else -> CozyTerracotta          // Standby cozy
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0F0E11),
+                        Color(0xFF1E1A22)
+                    )
+                )
+            )
+            .clickable(enabled = false) {} // block clicks
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Live Status Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.statusBars),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(themeColor)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Sunday Live Voice Mode",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp
+                    )
+                }
+
+                IconButton(
+                    onClick = onCloseLive,
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                        .size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Cerrar Live",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            // Visualizer Orbs
+            Box(
+                modifier = Modifier
+                    .size(240.dp)
+                    .align(Alignment.CenterHorizontally),
+                contentAlignment = Alignment.Center
+            ) {
+                if (speakingStatus != "Silencioso") {
+                    Box(
+                        modifier = Modifier
+                            .size(180.dp)
+                            .scale(if (speakingStatus == "Hablando" || speakingStatus == "Escuchando") scale3 else 1f)
+                            .clip(RoundedCornerShape(90.dp))
+                            .background(themeColor.copy(alpha = 0.08f))
+                            .border(width = 1.dp, color = themeColor.copy(alpha = 0.15f), shape = RoundedCornerShape(90.dp))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(140.dp)
+                            .scale(if (speakingStatus == "Hablando" || speakingStatus == "Escuchando") scale2 else 1f)
+                            .clip(RoundedCornerShape(70.dp))
+                            .background(themeColor.copy(alpha = 0.12f))
+                            .border(width = 1.2.dp, color = themeColor.copy(alpha = 0.25f), shape = RoundedCornerShape(70.dp))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(100.dp)
+                            .scale(if (speakingStatus == "Hablando" || speakingStatus == "Escuchando") scale1 else 1f)
+                            .clip(RoundedCornerShape(50.dp))
+                            .background(themeColor.copy(alpha = 0.18f))
+                            .border(width = 1.5.dp, color = themeColor.copy(alpha = 0.45f), shape = RoundedCornerShape(50.dp))
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(76.dp)
+                        .clip(RoundedCornerShape(38.dp))
+                        .shadow(elevation = 10.dp, shape = RoundedCornerShape(38.dp))
+                        .background(
+                            Brush.sweepGradient(
+                                colors = listOf(themeColor, themeColor.copy(alpha = 0.6f), themeColor)
+                            )
+                        )
+                        .clickable { onMicTrigger() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (speakingStatus == "Escuchando") Icons.Default.Mic else Icons.Default.MicNone,
+                        contentDescription = "Tap to talk",
+                        tint = Color.White,
+                        modifier = Modifier.size(34.dp)
+                    )
+                }
+            }
+
+            // Audio Response Subtitle
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = when (speakingStatus) {
+                        "Escuchando" -> "ESCUCHANDO TU VOZ..."
+                        "Pensando" -> "PROCESANDO RESPUESTA DE SUNDAY..."
+                        "Hablando" -> "SUNDAY AI ESTÁ HABLANDO..."
+                        else -> "TOCA EL MICRÓFONO CENTRAL PARA DICTAR"
+                    },
+                    color = themeColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 2.sp
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(110.dp)
+                        .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(20.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (lastSpokenText.isNotEmpty()) lastSpokenText else "¡Hola! Háblame como si de una llamada real se tratase. Cuéntame tu fin de semana de domingo.",
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Bottom controls & keyboard fallbacks
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(24.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(24.dp))
+                        .padding(horizontal = 14.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BasicTextField(
+                        value = liveTextInput,
+                        onValueChange = { liveTextInput = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        decorationBox = { innerTextField ->
+                            if (liveTextInput.isEmpty()) {
+                                Text("O escribe discretamente aquí...", color = Color.White.copy(alpha = 0.4f), fontSize = 13.sp)
+                            }
+                            innerTextField()
+                        }
+                    )
+
+                    IconButton(
+                        onClick = {
+                            if (liveTextInput.trim().isNotEmpty() && !isSending) {
+                                onSendSpeech(liveTextInput.trim())
+                                liveTextInput = ""
+                            }
+                        },
+                        enabled = liveTextInput.trim().isNotEmpty() && !isSending
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Enviar",
+                            tint = if (liveTextInput.trim().isNotEmpty()) CozyAmber else Color.White.copy(alpha = 0.3f)
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { onSoundToggle(!liveVoiceSoundActive) },
+                        modifier = Modifier
+                            .background(Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
+                            .size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (liveVoiceSoundActive) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                            contentDescription = "Mute",
+                            tint = Color.White
+                        )
+                    }
+
+                    Button(
+                        onClick = onCloseLive,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFBA1A1A)),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.CallEnd, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Terminar Live", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// PROFILE AND ACCOUNTS SETTINGS DIALOG (ROOM AND LOCAL STATE OVERRIDE)
+@Composable
+fun AccountSettingsDialog(
+    userName: String,
+    userEmoji: String,
+    isProMember: Boolean,
+    userApiKey: String,
+    onSaveProfile: (String, String) -> Unit,
+    onTogglePro: (Boolean) -> Unit,
+    onSaveApiKey: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var nameState by remember { mutableStateOf(userName) }
+    var emojiState by remember { mutableStateOf(userEmoji) }
+    var apiKeyState by remember { mutableStateOf(userApiKey) }
+
+    val emojis = listOf("☕", "🎨", "🧠", "🍂", "🥞", "🐈", "🦉", "🌲", "🏠", "🧘")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = CozyTerracotta
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Perfil de Cuenta",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Name Input
+                OutlinedTextField(
+                    value = nameState,
+                    onValueChange = { nameState = it },
+                    label = { Text("Nombre de Usuario") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Avatar Emojis list
+                Text(
+                    "Icono de Avatar:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(emojis) { emoji ->
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    if (emojiState == emoji) CozyTerracotta.copy(alpha = 0.2f)
+                                    else Color.Transparent
+                                )
+                                .border(
+                                    width = 1.5.dp,
+                                    color = if (emojiState == emoji) CozyTerracotta else Color.LightGray,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .clickable { emojiState = emoji },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = emoji, fontSize = 20.sp)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
+
+                // Sunday Premium active Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isProMember) Color(0xFFFFFDF0) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isProMember) ProGoldBorder else Color.Transparent
+                    ),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Membresía Sunday Pro",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (isProMember) Color(0xFF856404) else MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Stars,
+                                    contentDescription = null,
+                                    tint = Color(0xFFD4AF37),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                            Text(
+                                text = "El brillo visual dorado se reflejará en tu perfil activamente.",
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
+                                color = if (isProMember) Color(0xFF856404).copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = isProMember,
+                            onCheckedChange = { onTogglePro(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFFD4AF37),
+                                checkedTrackColor = Color(0xFFFFF2CC)
+                            )
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
+
+                // Optional local Gemini Key configuration
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Clave de API Gemini Local",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.VpnKey,
+                            contentDescription = null,
+                            tint = GlassPurplePrimary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    Text(
+                        text = "Sobrescribe la clave por defecto de forma privada y segura en tu almacenamiento local.",
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = apiKeyState,
+                        onValueChange = { apiKeyState = it },
+                        placeholder = { Text("AIzaSy...", fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CozyTerracotta,
+                            unfocusedBorderColor = Color.LightGray
+                        )
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSaveProfile(nameState.trim(), emojiState)
+                    onSaveApiKey(apiKeyState.trim())
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CozyTerracotta)
+            ) {
+                Text("Guardar Perfil")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        }
+    )
 }

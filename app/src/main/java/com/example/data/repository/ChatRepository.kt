@@ -59,8 +59,8 @@ class ChatRepository(private val chatDao: ChatDao) {
      * Sends a message to the specified chat session using its configured model.
      * Returns true if successful, false if not.
      */
-    suspend fun sendMessage(sessionId: String, textContent: String): Boolean = withContext(Dispatchers.IO) {
-        val apiKey = BuildConfig.GEMINI_API_KEY
+    suspend fun sendMessage(sessionId: String, textContent: String, customApiKey: String? = null): Boolean = withContext(Dispatchers.IO) {
+        val apiKey = if (!customApiKey.isNullOrEmpty()) customApiKey else BuildConfig.GEMINI_API_KEY
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
             Log.e("ChatRepository", "API Key is missing or default placeholder")
             insertErrorMessage(sessionId, "Error: Configura tu clave GEMINI_API_KEY en la sección Secrets de AI Studio para activar las respuestas.")
